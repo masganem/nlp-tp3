@@ -4,7 +4,7 @@ from typing import Iterable, List, Tuple
 
 from dataset import data
 
-SPECIALS: List[str] = ["<pad>", "<sos>", "<eos>", "<unk>"]
+SPECIALS: List[str] = ["<pad>", "<unk>"]
 _REPO_DIR = os.path.dirname(os.path.abspath(__file__))
 HANZI_VOCAB_PATH = os.path.join(_REPO_DIR, "hanzi_vocab.json")
 PINYIN_VOCAB_PATH = os.path.join(_REPO_DIR, "pinyin_vocab.json")
@@ -42,8 +42,6 @@ def _build_default_vocabs():
     """Build or load the shared Hanzi/Pinyin vocabularies."""
 
     def _ensure_vocab(path: str, tokens: Iterable[str]) -> Tuple[dict, List[str]]:
-        if os.path.exists(path):
-            return load_vocab(path)
         stoi, itos = build_vocab(tokens)
         save_vocab(itos, path)
         return stoi, itos
@@ -57,4 +55,3 @@ def _build_default_vocabs():
 
 
 hanzi_stoi, hanzi_itos, pinyin_stoi, pinyin_itos = _build_default_vocabs()
-

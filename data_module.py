@@ -7,9 +7,8 @@ from vocab import hanzi_stoi, pinyin_stoi
 
 
 class PinyinHanziDataset(Dataset):
-    def __init__(self, pairs: Sequence[tuple], add_sos_eos: bool = True):
+    def __init__(self, pairs: Sequence[tuple]):
         self.pairs = pairs
-        self.add_sos_eos = add_sos_eos
 
     def __len__(self) -> int:
         return len(self.pairs)
@@ -22,13 +21,9 @@ class PinyinHanziDataset(Dataset):
         unk_hz = hanzi_stoi["<unk>"]
         src_ids = [pinyin_stoi.get(t, unk_py) for t in src_tokens]
         tgt_ids = [hanzi_stoi.get(c, unk_hz) for c in tgt_tokens]
-        if self.add_sos_eos:
-            src_ids = [pinyin_stoi["<sos>"]] + src_ids + [pinyin_stoi["<eos>"]]
-            tgt_in = [hanzi_stoi["<sos>"]] + tgt_ids
-            tgt_out = tgt_ids + [hanzi_stoi["<eos>"]]
-        else:
-            tgt_in = tgt_ids
-            tgt_out = tgt_ids
+        # Pure per-token alignment; no extra boundary tokens.
+        tgt_in = tgt_ids
+        tgt_out = tgt_ids
         return {"src": src_ids, "tgt_in": tgt_in, "tgt_out": tgt_out}
 
 
@@ -52,9 +47,8 @@ def make_dataloader(
     pairs: Sequence[tuple],
     batch_size: int = 64,
     shuffle: bool = True,
-    add_sos_eos: bool = True,
 ) -> DataLoader:
     """Create a DataLoader with padding-aware collate."""
-    dataset = PinyinHanziDataset(pairs, add_sos_eos=add_sos_eos)
+    dataset = PinyinHanziDataset(pairs)
     collate = lambda batch: collate_batch(batch, pinyin_stoi["<pad>"], hanzi_stoi["<pad>"])
     return DataLoader(dataset, batch_size=batch_size, shuffle=shuffle, collate_fn=collate)

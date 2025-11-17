@@ -35,6 +35,8 @@ def _truncate_to_percentile(data, percentile=0.99):
 
 raw_data = fetch_dataset()
 data = _truncate_to_percentile(raw_data)
+# Keep only pairs where the pinyin token count matches the hanzi character count.
+data = [pair for pair in data if len(pair[0]) == len(pair[1].split())]
 
 hanzi = set(
     [
