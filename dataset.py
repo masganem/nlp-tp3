@@ -23,6 +23,10 @@ def fetch_dataset():
             if row.strip()
         ]
 
+# TODO: cutoff data from 99th percentile
+# Large sentences force large padding which slows training,
+# considering 99% of the entries are much much shorter
+# (see skewed distribution in https://huggingface.co/datasets/Duyu/Pinyin-Hanzi/tree/main)
 data = fetch_dataset()
 
 hanzi = set(
