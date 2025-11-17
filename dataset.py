@@ -2,6 +2,7 @@ import math
 import os
 import re
 import urllib.request
+import csv
 import torch
 from torch.utils.data import Dataset, DataLoader
 
@@ -17,12 +18,9 @@ def fetch_dataset():
         with open(DATASET_CACHE_PATH, "wb") as cache_file:
             cache_file.write(content)
 
-    with open(DATASET_CACHE_PATH, "r", encoding="utf-8") as cache_file:
-        return [
-            row.strip().split(',')
-            for row in cache_file
-            if row.strip()
-        ]
+    with open(DATASET_CACHE_PATH, "r", encoding="utf-8", newline="") as cache_file:
+        reader = csv.reader(cache_file)
+        return [row for row in reader if row]
 
 # Large sentences force large padding which slows training,
 # considering 99% of the entries are much much shorter
