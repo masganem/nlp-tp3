@@ -1,3 +1,4 @@
+import math
 import os
 import re
 import urllib.request
@@ -23,11 +24,19 @@ def fetch_dataset():
             if row.strip()
         ]
 
-# TODO: cutoff data from 99th percentile
 # Large sentences force large padding which slows training,
 # considering 99% of the entries are much much shorter
-# (see skewed distribution in https://huggingface.co/datasets/Duyu/Pinyin-Hanzi/tree/main)
-data = fetch_dataset()
+# (see skewed distribution in https://huggingface.co/datasets/Duyu/Pinyin-Hanzi/tree/main), we can cut off from the 99th percentile.
+def _truncate_to_percentile(data, percentile=0.99):
+    if not data:
+        return data
+    lengths = sorted(len(item[0]) for item in data)
+    cutoff_index = max(0, min(len(lengths) - 1, math.ceil(percentile * len(lengths)) - 1))
+    cutoff_length = lengths[cutoff_index]
+    return [item for item in data if len(item[0]) <= cutoff_length]
+
+raw_data = fetch_dataset()
+data = _truncate_to_percentile(raw_data)
 
 hanzi = set(
     [
