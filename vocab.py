@@ -6,8 +6,9 @@ from dataset import data
 
 SPECIALS: List[str] = ["<pad>", "<unk>"]
 _REPO_DIR = os.path.dirname(os.path.abspath(__file__))
-HANZI_VOCAB_PATH = os.path.join(_REPO_DIR, "hanzi_vocab.json")
-PINYIN_VOCAB_PATH = os.path.join(_REPO_DIR, "pinyin_vocab.json")
+DATA_DIR = os.path.join(_REPO_DIR, "data")
+HANZI_VOCAB_PATH = os.path.join(DATA_DIR, "hanzi_vocab.json")
+PINYIN_VOCAB_PATH = os.path.join(DATA_DIR, "pinyin_vocab.json")
 
 
 def build_vocab(tokens: Iterable[str]) -> Tuple[dict, List[str]]:
@@ -26,6 +27,7 @@ def build_vocab(tokens: Iterable[str]) -> Tuple[dict, List[str]]:
 
 def save_vocab(itos: List[str], path: str) -> None:
     """Persist vocabulary list to JSON for reuse across runs."""
+    os.makedirs(os.path.dirname(path), exist_ok=True)
     with open(path, "w", encoding="utf-8") as f:
         json.dump(itos, f, ensure_ascii=False, indent=2)
 

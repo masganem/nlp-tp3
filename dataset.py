@@ -7,12 +7,15 @@ import torch
 from torch.utils.data import Dataset, DataLoader
 
 DATASET_URL = "https://huggingface.co/datasets/Duyu/Pinyin-Hanzi/resolve/main/pinyin2hanzi.csv"
-DATASET_CACHE_PATH = os.path.join(os.path.dirname(os.path.abspath(__file__)), "pinyin2hanzi.csv")
+_REPO_DIR = os.path.dirname(os.path.abspath(__file__))
+DATA_DIR = os.path.join(_REPO_DIR, "data")
+DATASET_CACHE_PATH = os.path.join(DATA_DIR, "pinyin2hanzi.csv")
 _PINYIN_TOKEN_RE = re.compile(r"^[A-Za-z]+[0-9]$")
 
 
 def fetch_dataset():
     if not os.path.exists(DATASET_CACHE_PATH):
+        os.makedirs(DATA_DIR, exist_ok=True)
         with urllib.request.urlopen(DATASET_URL) as response:
             content = response.read()
         with open(DATASET_CACHE_PATH, "wb") as cache_file:
