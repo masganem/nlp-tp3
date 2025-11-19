@@ -1,0 +1,14 @@
+- Analyse profile of problem
+    - How many pinyin?
+    - How many hanzi?
+    - Implement a function to list all hanzi for a pinyin
+        - If ran as main, take first cli arg and print the hanzi
+    - How many hanzi per pinyin? plot distribution
+        - See other plots for reference.
+- Criticize metrics:
+    - Expand to include recall, f1
+    - How much accuracy is better than **picking most frequent pinyin per token?**;
+    - Could we somehow calculate bigram or trigram accuracy?
+- Actually split the dataset between train and validation
+- Make jupytext notebook
+    - Maybe I could run it on collab and leverage a nice tpu?
