@@ -4,7 +4,7 @@ import torch.nn as nn
 from tqdm import tqdm
 
 from data_module import make_dataloader
-from dataset import data
+from dataset import train_data, eval_data
 from model import BiGRUTagger
 from vocab import hanzi_stoi, pinyin_stoi, pinyin_hanzi_map
 
@@ -12,6 +12,68 @@ from vocab import hanzi_stoi, pinyin_stoi, pinyin_hanzi_map
 # Training is intended to run on CPU for simplicity/reproducibility.
 DEVICE = torch.device("cpu")
 CHECKPOINT_DIR = "checkpoints"
+
+
+def compute_batch_loss_and_metrics(candidate_logits, candidate_ids, tgt, pad_idx):
+    tgt_expanded = tgt.unsqueeze(-1)
+    matches = candidate_ids == tgt_expanded
+    target_indices = matches.long().argmax(dim=-1)
+    non_pad_mask = tgt != pad_idx
+    valid_mask = matches.any(dim=-1) & non_pad_mask
+
+    predictions = candidate_logits.argmax(dim=-1)
+    pred_hanzi = torch.gather(candidate_ids, dim=-1, index=predictions.unsqueeze(-1)).squeeze(-1)
+
+    if valid_mask.any():
+        logits_flat = candidate_logits[valid_mask]
+        targets_flat = target_indices[valid_mask]
+        loss = nn.functional.cross_entropy(logits_flat, targets_flat, reduction="sum")
+        total_tokens = int(valid_mask.sum().item())
+        total_correct = int(((predictions == target_indices) & valid_mask).sum().item())
+    else:
+        loss = candidate_logits.sum() * 0.0
+        total_tokens = 0
+        total_correct = 0
+
+    bigram_mask = non_pad_mask[:, :-1] & non_pad_mask[:, 1:]
+    bigram_correct = (
+        (pred_hanzi[:, :-1] == tgt[:, :-1])
+        & (pred_hanzi[:, 1:] == tgt[:, 1:])
+        & bigram_mask
+    )
+    total_bigram_correct = int(bigram_correct.sum().item())
+    total_bigrams = int(bigram_mask.sum().item())
+
+    return loss, total_tokens, total_correct, total_bigram_correct, total_bigrams
+
+
+def evaluate(model, dataloader, pad_idx):
+    model.eval()
+    total_loss = 0.0
+    total_tokens = 0
+    total_correct = 0
+    total_bigram_correct = 0
+    total_bigrams = 0
+
+    with torch.no_grad():
+        for batch in dataloader:
+            src = batch["src"].to(DEVICE)
+            tgt = batch["tgt_out"].to(DEVICE)
+            candidate_logits, candidate_ids = model(src)
+            loss, tokens, correct, bigram_correct, bigrams = compute_batch_loss_and_metrics(
+                candidate_logits, candidate_ids, tgt, pad_idx
+            )
+
+            total_loss += loss.item()
+            total_tokens += tokens
+            total_correct += correct
+            total_bigram_correct += bigram_correct
+            total_bigrams += bigrams
+
+    avg_loss = total_loss / max(total_tokens, 1)
+    accuracy = total_correct / max(total_tokens, 1) * 100
+    bigram_accuracy = total_bigram_correct / max(total_bigrams, 1) * 100
+    return avg_loss, accuracy, bigram_accuracy
 
 
 def train_model(
@@ -22,8 +84,9 @@ def train_model(
     lr: float = 1e-3,
     max_samples: int = None,
 ):
-    subset = data[:max_samples] if max_samples else data
+    subset = train_data[:max_samples] if max_samples else train_data
     dataloader = make_dataloader(subset, batch_size=batch_size, shuffle=True)
+    eval_loader = make_dataloader(eval_data, batch_size=batch_size, shuffle=False)
     model = BiGRUTagger(
         vocab_size=len(pinyin_stoi),
         embed_dim=embed_dim,
@@ -48,69 +111,31 @@ def train_model(
             tgt = batch["tgt_out"].to(DEVICE)  # [batch, seq_len] true hanzi IDs
 
             optimizer.zero_grad()
-
-            # Model returns candidate logits and their corresponding hanzi IDs
             candidate_logits, candidate_ids = model(src)
-            # candidate_logits: [batch, seq_len, max_candidates]
-            # candidate_ids: [batch, seq_len, max_candidates]
+            loss, tokens, correct, bigram_correct, bigrams = compute_batch_loss_and_metrics(
+                candidate_logits, candidate_ids, tgt, pad_idx
+            )
 
-            # For each position, find which candidate index matches the true target
-            # Expand tgt to compare: [batch, seq_len, 1]
-            tgt_expanded = tgt.unsqueeze(-1)  # [batch, seq_len, 1]
-
-            # Find which candidate matches the target: [batch, seq_len, max_candidates]
-            matches = (candidate_ids == tgt_expanded)  # Boolean tensor
-
-            # Convert to target indices for CrossEntropyLoss
-            # For each position, find the index of the matching candidate
-            target_indices = matches.long().argmax(dim=-1)  # [batch, seq_len]
-
-            # Mask for non-padding positions
-            non_pad_mask = tgt != pad_idx
-
-            # Collect predictions for bigram accuracy
-            predictions = candidate_logits.argmax(dim=-1)  # [batch, seq_len]
-            pred_hanzi = torch.gather(candidate_ids, dim=-1, index=predictions.unsqueeze(-1)).squeeze(-1)
-
-            # Only compute loss on non-padding positions
-            loss = 0.0
-            batch_size, seq_len = src.shape
-            for b in range(batch_size):
-                for s in range(seq_len):
-                    if non_pad_mask[b, s]:
-                        # Check if target exists in candidates
-                        if matches[b, s].any():
-                            target_idx = target_indices[b, s]
-                            logits_at_pos = candidate_logits[b, s]  # [max_candidates]
-                            loss += nn.functional.cross_entropy(
-                                logits_at_pos.unsqueeze(0),
-                                target_idx.unsqueeze(0),
-                                reduction='sum'
-                            )
-                            total_tokens += 1
-
-                            # Accuracy tracking
-                            pred_idx = candidate_logits[b, s].argmax()
-                            if pred_idx == target_idx:
-                                total_correct += 1
-
-                    # Bigram accuracy tracking
-                    if s < seq_len - 1 and non_pad_mask[b, s] and non_pad_mask[b, s + 1]:
-                        # Check if both positions in the bigram are correct
-                        if pred_hanzi[b, s] == tgt[b, s] and pred_hanzi[b, s + 1] == tgt[b, s + 1]:
-                            total_bigram_correct += 1
-                        total_bigrams += 1
-
-            if total_tokens > 0:
-                loss = loss / total_tokens
-                loss.backward()
+            if tokens > 0:
+                (loss / tokens).backward()
                 optimizer.step()
-                total_loss += loss.item()
 
-        avg_loss = total_loss / len(dataloader)
+                total_loss += loss.item()
+                total_tokens += tokens
+                total_correct += correct
+                total_bigram_correct += bigram_correct
+                total_bigrams += bigrams
+
+        avg_loss = total_loss / max(total_tokens, 1)
         accuracy = total_correct / max(total_tokens, 1) * 100
         bigram_accuracy = total_bigram_correct / max(total_bigrams, 1) * 100
-        print(f"epoch {epoch:02d} - loss: {avg_loss:.4f} - token acc: {accuracy:.2f}% - bigram acc: {bigram_accuracy:.2f}%")
+
+        eval_loss, eval_acc, eval_bigram_acc = evaluate(model, eval_loader, pad_idx)
+        print(
+            f"epoch {epoch:02d} - "
+            f"loss: {avg_loss:.4f} - token acc: {accuracy:.2f}% - bigram acc: {bigram_accuracy:.2f}% - "
+            f"val loss: {eval_loss:.4f} - val token acc: {eval_acc:.2f}% - val bigram acc: {eval_bigram_acc:.2f}%"
+        )
 
     # Save checkpoint
     os.makedirs(CHECKPOINT_DIR, exist_ok=True)

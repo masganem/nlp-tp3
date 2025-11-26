@@ -3,6 +3,7 @@ import os
 import re
 import urllib.request
 import csv
+import random
 import torch
 from torch.utils.data import Dataset, DataLoader
 
@@ -40,6 +41,19 @@ raw_data = fetch_dataset()
 data = _truncate_to_percentile(raw_data)
 # Keep only pairs where the pinyin token count matches the hanzi character count.
 data = [pair for pair in data if len(pair[0]) == len(pair[1].split())]
+
+
+def split_dataset(pairs, train_ratio=0.8, seed=42):
+    if not pairs:
+        return [], []
+    rng = random.Random(seed)
+    shuffled = list(pairs)
+    rng.shuffle(shuffled)
+    split_idx = int(len(shuffled) * train_ratio)
+    return shuffled[:split_idx], shuffled[split_idx:]
+
+
+train_data, eval_data = split_dataset(data)
 
 hanzi = set(
     [
