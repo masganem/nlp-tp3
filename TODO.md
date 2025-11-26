@@ -1,7 +1,1 @@
-- Criticize metrics:
-    - Expand to include recall, f1
-    - How much accuracy is better than **picking most frequent pinyin per token?**;
-    - Could we somehow calculate bigram or trigram accuracy?
-- Make jupytext notebook
-    - Maybe I could run it on collab and leverage a nice gpu?
-    - Would it make a difference though?
+- Make jupytext notebook (for delivery, can be run locally)

@@ -24,15 +24,15 @@ def compute_batch_loss_and_metrics(candidate_logits, candidate_ids, tgt, pad_idx
     predictions = candidate_logits.argmax(dim=-1)
     pred_hanzi = torch.gather(candidate_ids, dim=-1, index=predictions.unsqueeze(-1)).squeeze(-1)
 
+    tokens_with_target = int(valid_mask.sum().item())
+
     if valid_mask.any():
         logits_flat = candidate_logits[valid_mask]
         targets_flat = target_indices[valid_mask]
         loss = nn.functional.cross_entropy(logits_flat, targets_flat, reduction="sum")
-        total_tokens = int(valid_mask.sum().item())
         total_correct = int(((predictions == target_indices) & valid_mask).sum().item())
     else:
         loss = candidate_logits.sum() * 0.0
-        total_tokens = 0
         total_correct = 0
 
     bigram_mask = non_pad_mask[:, :-1] & non_pad_mask[:, 1:]
@@ -44,13 +44,19 @@ def compute_batch_loss_and_metrics(candidate_logits, candidate_ids, tgt, pad_idx
     total_bigram_correct = int(bigram_correct.sum().item())
     total_bigrams = int(bigram_mask.sum().item())
 
-    return loss, total_tokens, total_correct, total_bigram_correct, total_bigrams
+    return (
+        loss,
+        tokens_with_target,
+        total_correct,
+        total_bigram_correct,
+        total_bigrams,
+    )
 
 
 def evaluate(model, dataloader, pad_idx):
     model.eval()
     total_loss = 0.0
-    total_tokens = 0
+    tokens_with_target = 0
     total_correct = 0
     total_bigram_correct = 0
     total_bigrams = 0
@@ -60,20 +66,64 @@ def evaluate(model, dataloader, pad_idx):
             src = batch["src"].to(DEVICE)
             tgt = batch["tgt_out"].to(DEVICE)
             candidate_logits, candidate_ids = model(src)
-            loss, tokens, correct, bigram_correct, bigrams = compute_batch_loss_and_metrics(
-                candidate_logits, candidate_ids, tgt, pad_idx
-            )
+            (
+                loss,
+                batch_tokens_with_target,
+                correct,
+                bigram_correct,
+                bigrams,
+            ) = compute_batch_loss_and_metrics(candidate_logits, candidate_ids, tgt, pad_idx)
 
             total_loss += loss.item()
-            total_tokens += tokens
+            tokens_with_target += batch_tokens_with_target
             total_correct += correct
             total_bigram_correct += bigram_correct
             total_bigrams += bigrams
 
-    avg_loss = total_loss / max(total_tokens, 1)
-    accuracy = total_correct / max(total_tokens, 1) * 100
-    bigram_accuracy = total_bigram_correct / max(total_bigrams, 1) * 100
-    return avg_loss, accuracy, bigram_accuracy
+    avg_loss = total_loss / max(tokens_with_target, 1)
+
+    token_precision = total_correct / max(tokens_with_target, 1)
+    bigram_precision = total_bigram_correct / max(total_bigrams, 1)
+
+    return avg_loss, token_precision * 100, bigram_precision * 100
+
+
+def plot_training_progress(history, save_path: str = "progress.png"):
+    if not history:
+        return
+    try:
+        import matplotlib.pyplot as plt
+    except ImportError:
+        print("matplotlib not installed; skipping progress plot")
+        return
+
+    epochs = list(range(1, len(history) + 1))
+
+    fig, axes = plt.subplots(1, 2, figsize=(12, 4))
+
+    # Loss
+    axes[0].plot(epochs, [h["train_loss"] for h in history], label="train")
+    axes[0].plot(epochs, [h["val_loss"] for h in history], label="val")
+    axes[0].set_xlabel("Epoch")
+    axes[0].set_ylabel("Loss")
+    axes[0].set_title("Loss")
+    axes[0].legend()
+    axes[0].grid(True, linestyle="--", alpha=0.3)
+
+    # Precision metrics
+    axes[1].plot(epochs, [h["train_prec"] for h in history], label="train token")
+    axes[1].plot(epochs, [h["val_prec"] for h in history], label="val token", linestyle="--")
+    axes[1].plot(epochs, [h["train_bi_prec"] for h in history], label="train bigram")
+    axes[1].plot(epochs, [h["val_bi_prec"] for h in history], label="val bigram", linestyle="--")
+    axes[1].set_xlabel("Epoch")
+    axes[1].set_ylabel("Precision (%)")
+    axes[1].set_title("Token & bigram precision")
+    axes[1].legend()
+    axes[1].grid(True, linestyle="--", alpha=0.3)
+
+    fig.tight_layout()
+    fig.savefig(save_path, bbox_inches="tight")
+    plt.close(fig)
 
 
 def train_model(
@@ -97,12 +147,14 @@ def train_model(
 
     optimizer = torch.optim.Adam(model.parameters(), lr=lr)
     pad_idx = hanzi_stoi["<pad>"]
+    history = []
 
     for epoch in range(1, num_epochs + 1):
         model.train()
         total_loss = 0.0
         total_correct = 0
-        total_tokens = 0
+        tokens_with_target = 0
+        total_targets = 0
         total_bigram_correct = 0
         total_bigrams = 0
 
@@ -112,30 +164,52 @@ def train_model(
 
             optimizer.zero_grad()
             candidate_logits, candidate_ids = model(src)
-            loss, tokens, correct, bigram_correct, bigrams = compute_batch_loss_and_metrics(
-                candidate_logits, candidate_ids, tgt, pad_idx
-            )
+            (
+                loss,
+                batch_tokens_with_target,
+                correct,
+                bigram_correct,
+                bigrams,
+            ) = compute_batch_loss_and_metrics(candidate_logits, candidate_ids, tgt, pad_idx)
 
-            if tokens > 0:
-                (loss / tokens).backward()
+            if batch_tokens_with_target > 0:
+                (loss / batch_tokens_with_target).backward()
                 optimizer.step()
 
                 total_loss += loss.item()
-                total_tokens += tokens
+                tokens_with_target += batch_tokens_with_target
                 total_correct += correct
                 total_bigram_correct += bigram_correct
                 total_bigrams += bigrams
 
-        avg_loss = total_loss / max(total_tokens, 1)
-        accuracy = total_correct / max(total_tokens, 1) * 100
-        bigram_accuracy = total_bigram_correct / max(total_bigrams, 1) * 100
+        avg_loss = total_loss / max(tokens_with_target, 1)
+        token_prec = total_correct / max(tokens_with_target, 1)
+        bigram_prec = total_bigram_correct / max(total_bigrams, 1)
 
-        eval_loss, eval_acc, eval_bigram_acc = evaluate(model, eval_loader, pad_idx)
+        eval_loss, eval_prec, eval_bi_prec = evaluate(model, eval_loader, pad_idx)
+
+        train_prec_pct = token_prec * 100
+        train_bi_prec_pct = bigram_prec * 100
+
+        history.append(
+            {
+                "train_loss": avg_loss,
+                "val_loss": eval_loss,
+                "train_prec": train_prec_pct,
+                "val_prec": eval_prec,
+                "train_bi_prec": train_bi_prec_pct,
+                "val_bi_prec": eval_bi_prec,
+            }
+        )
         print(
             f"epoch {epoch:02d} - "
-            f"loss: {avg_loss:.4f} - token acc: {accuracy:.2f}% - bigram acc: {bigram_accuracy:.2f}% - "
-            f"val loss: {eval_loss:.4f} - val token acc: {eval_acc:.2f}% - val bigram acc: {eval_bigram_acc:.2f}%"
+            f"loss: {avg_loss:.4f} - token precision: {train_prec_pct:.2f}% - "
+            f"bigram precision: {train_bi_prec_pct:.2f}% - "
+            f"val loss: {eval_loss:.4f} - val token precision: {eval_prec:.2f}% - "
+            f"val bigram precision: {eval_bi_prec:.2f}%"
         )
+
+    plot_training_progress(history, save_path="progress.png")
 
     # Save checkpoint
     os.makedirs(CHECKPOINT_DIR, exist_ok=True)
