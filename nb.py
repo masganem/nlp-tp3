@@ -2,9 +2,16 @@
 # 
 # ## Trabalho Prático III
 # ### Aprendizado Profundo para Processamento de Linguagem Natural (2025/2)
+# # Transcrição de caracteres chineses como uma tarefa de classificação em NLP
 # **Aluno:** Marcelo Augusto Salomão Ganem
 #
 # **Matrícula:** 2020054684
+#
+# Modelamos a tarefa de **transcrição de pinyin** (a sintaxe romanizada para escrita do chinês) **para hanzi** (ideogramas correspondentes) como _single-label classification_, visando atribuir a cada pinyin o rótulo que representa o hanzi correspondente. Esse mapeamento não é trivial: para cada pinyin, existem múltiplos hanzi válidos, a serem desambiguados com base no contexto da frase.
+#
+# Apesar da utilidade prática atingida por modelos puramente baseados em regras, soluções baseadas em _Hidden Markov Models_ e modelos estatísticos de _n-grams_ constituíram um salto expressivo na acurácia e conveniência de uso para tais modelos. Atualmente, soluções baseadas em aprendizado profundo, incluindo modelos _sequence-to-sequence_ com mecanismos de atenção, representam o estado da arte nessa tarefa.
+#
+# Temos por objetivo superar a _baseline_ trivial da escolha do hanzi mais frequente para cada pinyin (e.g, melhor chute) por meio de aprendizado profundo, treinando redes neurais em uma _Bidirectional Gated Recurrent Unit_. A flexibilidade da solução é inferior comparada a paradigmas _sequence-to-sequence_, mas a eficiência por dados de treino é maior; o tamanho do modelo também é compatível com os recursos disponíveis para os experimentos necessários.
 # 
 # ## Preparações
 # De início, carregamos bibliotecas para requisitar e realizar a leitura do dataset (`urllib`, `csv`), instanciar e realizar operações com tensores (`torch`) e renderizar gráficos (`matplotlib`), dentre outras funções e classes utilitárias.
@@ -34,7 +41,11 @@ SPECIALS = ["<pad>", "<unk>"]
 DATASET_URL = "https://huggingface.co/datasets/Duyu/Pinyin-Hanzi/resolve/main/pinyin2hanzi.csv"
 _PINYIN_TOKEN_RE = re.compile(r"^[A-Za-z]+[0-9]$")
 
-
+# %% [markdown]
+#
+# Requisitamos o dataset da web, lendo as entradas do arquivo `.csv`.
+#
+# %%
 def fetch_dataset():
     content = None
     with urllib.request.urlopen(DATASET_URL) as response:
@@ -48,7 +59,8 @@ print(raw_data[:10])
 
 # %% [markdown]
 #
-#  Análise primária: comprimento das entradas do dataset
+# ### Análise primária: comprimento das entradas 
+# A vasta maior parte das sentenças disponíveis no dataset é muito mais curta do que as poucas sentenças mais longas. Projetamos o comprimento das entradas (por número de _hanzi_) em escala logarítmica para identificar um ponto de corte, de maneira a minimizar a perda de dados de treino mas também viabilizar a operação com batches, bem como limitar a necessidade de _padding_ (quanto maior a maior entrada, mais _padding_ é necessário para as demais entradas).
 #
 # %%
 def _build_hist(ax, lengths, title, color):
@@ -81,7 +93,7 @@ ax_raw.set_ylim(bottom=0.8)
 plt.show()
 
 # %% [markdown]
-# Large sentences force large padding which slows training, considering 99% of the entries are much much shorter (see skewed distribution in https://huggingface.co/datasets/Duyu/Pinyin-Hanzi/tree/main), we can cut off from the 99th percentile.
+# Cortamos, portanto, o centésimo percentil das sentenças, ordenadas por comprimento. Preservamos, dessa maneira, a maior parte dos dados, ainda garantindo conveniência durante o treino.
 # %%
 def _truncate_to_percentile(data, percentile=0.99):
     if not data:
@@ -91,11 +103,13 @@ def _truncate_to_percentile(data, percentile=0.99):
     cutoff_length = lengths[cutoff_index]
     return [item for item in data if len(item[0]) <= cutoff_length]
 
+print(len(data))
 data = _truncate_to_percentile(raw_data)
+print(len(data))
 
 # %% [markdown]
 #
-# Novo histograma depois do recorte
+# Projetamos um novo histograma depois do recorte, dessa vez em escala linear, para visualizar a distribuição de comprimento do conjunto de dados restantes.
 #
 # %%
 fig, (ax_filtered) = plt.subplots(
@@ -108,18 +122,18 @@ _build_hist(
 
 # %% [markdown]
 #
-# Keep only pairs where the pinyin token count matches the hanzi character count. (since we're running classification and not typical seq2seq encoding/decoding).
+# Como estamos tratando essa tarefa de transcrição sob o paradigma de classificação, precisamos manter apenas as sentenças cujo número de hanzi é igual ao número e pinyin.
 #
 # %%
-
+print(len(data))
 data = [pair for pair in data if len(pair[0]) == len(pair[1].split())]
+print(len(data))
 
 # %% [markdown]
 #
-# Split between training and validation (80/20)
+# Após o tratamento inicial, dividimos o conjunto de dados na proporção $4:1$ para treino e validação, respectivamente.
 #
 # %%
-
 def split_dataset(pairs, train_ratio=0.8, seed=42):
     if not pairs:
         return [], []
