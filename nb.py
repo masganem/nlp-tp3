@@ -9,6 +9,8 @@
 #
 # Modelamos a tarefa de **transcrição de pinyin** (a sintaxe romanizada para escrita do chinês) **para hanzi** (ideogramas correspondentes) como _single-label classification_, visando atribuir a cada pinyin o rótulo que representa o hanzi correspondente. Esse mapeamento não é trivial: para cada pinyin, existem múltiplos hanzi válidos, a serem desambiguados com base no contexto da frase.
 #
+# ![usage](https://github.com/masganem/nlp-tp3/blob/main/usage.gif?raw=true "usage")
+#
 # Apesar da utilidade prática atingida por modelos puramente baseados em regras, soluções baseadas em _Hidden Markov Models_ e modelos estatísticos de _n-grams_ constituíram um salto expressivo na acurácia e conveniência de uso para tais modelos. Atualmente, soluções baseadas em aprendizado profundo, incluindo modelos _sequence-to-sequence_ com mecanismos de atenção, representam o estado da arte nessa tarefa.
 #
 # Temos por objetivo superar a _baseline_ trivial da escolha do hanzi mais frequente para cada pinyin (e.g, melhor chute) por meio de aprendizado profundo, treinando redes neurais em uma _Bidirectional Gated Recurrent Unit_. A flexibilidade da solução é inferior comparada a paradigmas _sequence-to-sequence_, mas a eficiência por dados de treino é maior; o tamanho do modelo também é compatível com os recursos disponíveis para os experimentos necessários.
@@ -318,7 +320,28 @@ plt.show()
 
 # %% [markdown]
 #
-# Construímos um modelo para (...) (falar sobre BiGRU) (explicar concatenação de janela de contexto local)
+# ## Modelo (BiGRU Classifier)
+# ### Gated Recurrent Unit
+# - Simplificação da LSTM (introduzida em 2014)
+# - Resolve o problema de _vanishing/exploding_ gradient
+# - Implementa gates *reset* e *update* para controlar a propagação do estado para a memória
+# - Mantém um único _hidden state_ (em vez de memórias separadas, como na LSTM)
+# ![gru](https://www.researchgate.net/publication/328462205/figure/fig4/AS:684914898923521@1540307845043/Gated-Recurrent-Unit-GRU.ppm "GRU")
+#
+# ### Bidirectional Gated Recurrent Unit (BiGRU)
+# - Duas camadas de GRU: uma lê as entradas de frente para trás, a outra de trás para frente.
+# - Os vetores de contexto dos últimos blocos são concatenados
+# ![bigru](https://www.researchgate.net/publication/331459358/figure/fig2/AS:850162641534979@1579705977558/Network-architecture-of-BiGRU.png "BiGRU")
+#
+# ### Alterações implementadas
+# - Representação one-hot dos vocabulários de pinyin e hanzi
+# - Camada de embedding (_fully connected_)
+# - Concatenação de contextos vizinhos
+#   - O contexto a nível de bigrama ($i-1$, $i$, $i+1$) é o mais relevante na transcrição de pinyin para hanzi
+# - Camada de **output**:
+#   - Fully connected
+#   - Ativação da camada final via _softmax_
+#   - Saídas do _softmax_ são tratadas como probabilidades de escolha para cada _hanzi_ vocabulário
 #
 # %%
 class BiGRUTagger(nn.Module):
@@ -411,7 +434,7 @@ class BiGRUTagger(nn.Module):
         return candidate_logits, candidate_ids
 
 # %% [markdown]
-#
+# ### _Baseline_ 
 # Implementamos também uma estratégia _baseline_ que seleciona o hanzi mais frequente para qualquer pinyin. 
 #
 # %%
@@ -423,7 +446,7 @@ most_freq = {py: counter.most_common(1)[0][0] for py, counter in freq_counts.ite
 
 # %% [markdown]
 #
-# Avaliamos a acurácia do método escolhido no conjunto de validação.
+# Avaliamos a acurácia do método _baseline_ no conjunto de validação.
 #
 # %%
 total_tokens = 0
@@ -460,9 +483,9 @@ print(f"token precision: {token_precision * 100:.2f}%")
 print(f"bigram precision: {bigram_precision * 100:.2f}%")
 
 # %% [markdown]
-#
-# Definimos a função de perda para o treino como a _cross-entropy_ entre (...) e (...).
-# Calculamos também a acurácia por token e por bigrama (quantos % dos tokens e dos bigramas de cada sentença foram corretamente transcritos de pinyin para hanzi)
+# ## Treino
+# Definimos a função de perda para o treino como a _cross-entropy_ entre os _logits_ (saídas pré-ativação) da camada final e o vetor one-hot que representa o hanzi correto para cada pinyin na sequência de entrada.
+# Calculamos também a **acurácia por token e por bigrama** (quantos % dos tokens e dos bigramas de cada sentença foram corretamente transcritos de pinyin para hanzi) durante os processos de treino e validação.
 #
 # %%
 def compute_batch_loss_and_metrics(candidate_logits, candidate_ids, tgt, pad_idx):
@@ -544,7 +567,7 @@ def evaluate(model, dataloader, pad_idx):
 
 # %% [markdown]
 #
-# Definimos então a função de treino, que (...) e mantém um histórico de (...)
+# Definimos então a função de treino, que utiliza o algoritmo `Adam` implementado na biblioteca `torch` para otimizar os pesos das camadas de embedding, GRUs e saída. Coletamos _batches_ de $256$ entradas e treinamos ao longo de $8$ épocas.
 #
 # %%
 def train_model(
@@ -632,7 +655,8 @@ model, history = train_model()
 
 # %% [markdown]
 #
-# Tomamos o histórico do modelo e visualizamos o processo de treino:
+# ## Resultados
+# Tomamos o histórico de loss e acurácia do modelo durante o treino e visualizamos o processo de treino:
 #
 # %%
 def plot_training_progress(history):
