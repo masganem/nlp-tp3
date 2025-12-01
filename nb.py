@@ -7,6 +7,8 @@
 #
 # **Matrícula:** 2020054684
 #
+# ### [Vídeo de Apresentação](https://www.youtube.com/watch?v=jmUlVox0ptI)
+#
 # Modelamos a tarefa de **transcrição de pinyin** (a sintaxe romanizada para escrita do chinês) **para hanzi** (ideogramas correspondentes) como _single-label classification_, visando atribuir a cada pinyin o rótulo que representa o hanzi correspondente. Esse mapeamento não é trivial: para cada pinyin, existem múltiplos hanzi válidos, a serem desambiguados com base no contexto da frase.
 #
 # ![usage](https://github.com/masganem/nlp-tp3/blob/main/usage.gif?raw=true "usage")
